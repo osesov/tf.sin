@@ -21,30 +21,6 @@ const SIN = {
     do: (value) => tf.sin(value)
 }
 
-const TAN_LIMIT = 100;
-
-const TAN = {
-    /** @type {number} */
-    argMin: Math.atan(-TAN_LIMIT), // -Math.PI/4,
-
-    /** @type {number} */
-    argMax: Math.atan(+TAN_LIMIT), // +Math.PI/4,
-
-    /** @type {number} */
-    resMin: -TAN_LIMIT, // Math.tan(-Math.PI/4),
-
-    /** @type {number} */
-    resMax: +TAN_LIMIT, // Math.tan(+Math.PI/4),
-
-    name: 'Tan',
-
-    /**
-     * @param {Tensor1D} value
-     * @returns {Tensor1D}
-     */
-    do: (value) => tf.tan(value)
-}
-
 const fn = SIN;
 
 /** @typedef Track
@@ -63,21 +39,24 @@ const fn = SIN;
  * @property {Limits} limitY
  */
 
-/** @returns {Promise<SourceDataSet>} */
+/** Сформировать набор данных для обучения и верификации модели.
+ * @returns {Promise<SourceDataSet>}
+ */
 async function getData()
 {
     const dataPoints = 1000;
     const validationPoints = 100;
 
+    // линейное пространство, состоящее из dataPoints точек, равномерно распределенное на интервале от argMin до argMax
     const dataX = tf.linspace(fn.argMin, fn.argMax, dataPoints);
-    // clamp values?
+    // вычислить функцию для каждой точки
     const dataY = fn.do(dataX);
 
+    // данные для валидации - случайные значения, с равномерным распределением вероятности на интервале от argMin до argMax
     const validationX = tf.randomUniform([validationPoints, 1], fn.argMin, fn.argMax);
-    // clamp values?
     const validationY = fn.do(validationX);
 
-    /**
+    /** Нормализация - вычислить минимальное и максимальное значение для данных.
      * @param {number|undefined} fnMin
      * @param {number|undefined} fnMax
      * @param {Tensor1D} data
@@ -109,7 +88,6 @@ async function getData()
 
 /**
  * @typedef ModelDataSet
- * @property {Sequential} model
  * @property {DataSet} train
  * @property {DataSet} validation
  * @property {Limits} limitX
@@ -138,8 +116,10 @@ function denormalizeTensor(data, limits)
     return data.mul(delta).add(limits.min);
 }
 
-/** @returns {Promise<() => Promise<ModelDataSet>>} */
-async function createModel()
+/** Создание модели
+ * @returns {Sequential}
+ */
+function createModel()
 {
     // Create a simple model.
     const model = tf.sequential();
@@ -162,6 +142,15 @@ async function createModel()
     const surface = { name: 'Model Summary', tab: 'Model Inspection'};
     tfvis.show.modelSummary(surface, model);
 
+    return model;
+}
+
+/*
+ * @param {Sequential} model
+ * @returns {Promise<ModelDataSet>}
+ */
+async function trainModel(model)
+{
     const data = await getData();
 
     /**
@@ -214,58 +203,56 @@ async function createModel()
         { height: 200, callbacks: ['onEpochEnd'] }
     );
 
-    return async () => {
-        const input = await denormalizeTensor(validation.x, data.limitX).data();
-        await model.fit(train.x, train.y, {
-            batchSize,
-            epochs,
-            shuffle: true,
-            validationData: [validation.x, validation.y],
-            callbacks: {
-                ... fitCallbacks,
-                onEpochEnd: async function(number, logs) {
-                    console.log(`End of epoch: ${number}`)
+    const input = await denormalizeTensor(validation.x, data.limitX).data();
+    await model.fit(train.x, train.y, {
+        batchSize,
+        epochs,
+        shuffle: true,
+        validationData: [validation.x, validation.y],
+        callbacks: {
+            ... fitCallbacks,
+            onEpochEnd: async function(number, logs) {
+                console.log(`End of epoch: ${number}`)
 
-                    const predictedValues = model.predict(validation.x);
-                    if (Array.isArray(predictedValues))
-                        throw new Error("Unexpected result");
+                const predictedValues = model.predict(validation.x);
+                if (Array.isArray(predictedValues))
+                    throw new Error("Unexpected result");
 
-                    // const output = denormalizeTensor(predictedValues, data.limitY).dataSync();
-                    // const expectedPoints = Array.from(input).map((value) => ({x: value, y: fn.do(value).dataSync()[0]}))
-                    // const predictedPoints = Array.from(input).map( (value, index) => ({x: value, y: output[index]}) );
+                // const output = denormalizeTensor(predictedValues, data.limitY).dataSync();
+                // const expectedPoints = Array.from(input).map((value) => ({x: value, y: fn.do(value).dataSync()[0]}))
+                // const predictedPoints = Array.from(input).map( (value, index) => ({x: value, y: output[index]}) );
 
-                    const expectedPoints = await getScatterPoints(validation);
-                    const predictedPoints = await getScatterPoints({x: validation.x, y: predictedValues});
+                const expectedPoints = await getScatterPoints(validation);
+                const predictedPoints = await getScatterPoints({x: validation.x, y: predictedValues});
 
-                    tfvis.render.scatterplot(
-                        { name: 'Training', tab: 'Train' },
-                        { values: [expectedPoints, predictedPoints], series: ["expected", "predicted"] },
-                        {
-                            xLabel: 'normalized (0..1)',
-                            yLabel: 'normalized (0..1)',
-                            height: 300,
-                            xAxisDomain: [0, 1],
-                            yAxisDomain: [-0.1, 1.1 ],
-                        }
-                    );
+                tfvis.render.scatterplot(
+                    { name: 'Training', tab: 'Train' },
+                    { values: [expectedPoints, predictedPoints], series: ["expected", "predicted"] },
+                    {
+                        xLabel: 'normalized (0..1)',
+                        yLabel: 'normalized (0..1)',
+                        height: 300,
+                        xAxisDomain: [0, 1],
+                        yAxisDomain: [-0.1, 1.1 ],
+                    }
+                );
 
-                    return fitCallbacks.onEpochEnd ? fitCallbacks.onEpochEnd.call(fitCallbacks, number, logs) : undefined;
-                }
+                return fitCallbacks.onEpochEnd ? fitCallbacks.onEpochEnd.call(fitCallbacks, number, logs) : undefined;
             }
-        });
-        console.log("training done");
-        return {model, train, validation, limitX: data.limitX, limitY: data.limitY};
-    }
+        }
+    });
+    console.log("training done");
+    return {model, train, validation, limitX: data.limitX, limitY: data.limitY};
 }
 
 
 /**
- *
+ * @param {Sequential} model
  * @param {ModelDataSet} data
  */
-async function testModel(data)
+async function testModel(model, data)
 {
-    const { model, train, validation, limitX, limitY } = data;
+    const { train, validation, limitX, limitY } = data;
     const inputValues = tf.randomUniform([100,1], 0, 1);
 
     /** @type {Tensor<Rank> | Tensor<Rank>[]} */
@@ -289,7 +276,6 @@ async function testModel(data)
           height: 300
         }
     );
-
 }
 
 async function run()
@@ -299,12 +285,13 @@ async function run()
         // await tf.setBackend('wasm');
     }
 
-    const fn = await createModel();
+    tfvis.visor().toggleFullScreen();
+    const model = createModel();
 
     $("#run").click( () =>
         setTimeout( async () => {
-            const data = await fn();
-            testModel(data);
+            const data = await trainModel(model);
+            testModel(model, data);
         }, 3000)
     );
 }
