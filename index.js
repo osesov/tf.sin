@@ -121,24 +121,17 @@ function denormalizeTensor(data, limits)
  */
 function createModel()
 {
-    // Create a simple model.
     const model = tf.sequential();
     model.add(tf.layers.inputLayer({inputShape: [1]}))
     model.add(tf.layers.dense({units: 50, activation: 'relu', name: 'hidden1'}));
     model.add(tf.layers.dense({units: 1,  activation: 'linear', name: 'output'}));
 
-    // Prepare the model for training: Specify the loss and the optimizer.
     model.compile({
-        // sin
         loss: tf.losses.meanSquaredError,
         optimizer: tf.train.adam(),
-        // metrics: ['mse'],
-        //
-        // loss: tf.losses.meanSquaredError,
-        // optimizer: 'sgd',
-        // metrics: ['accuracy'],
     });
 
+    // отобразить графически информацию о модели
     const surface = { name: 'Model Summary', tab: 'Model Inspection'};
     tfvis.show.modelSummary(surface, model);
 
